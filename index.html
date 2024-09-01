@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clinker-to-Cement Mix Proportioning Optimizer</title>
+<style>
+  :root{--ink:#0f172a;--muted:#64748b;--brand:#0e7490;--brand2:#155e75;--line:#e2e8f0;--bg:#f1f5f9;--card:#fff;--ok:#16a34a;--warn:#d97706}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--ink);background:var(--bg);line-height:1.5}
+  header{background:linear-gradient(135deg,var(--brand),#0f766e);color:#fff;padding:22px 28px}
+  header h1{font-size:22px;font-weight:700}
+  header p{opacity:.9;font-size:13px;margin-top:4px}
+  .wrap{max-width:1080px;margin:0 auto;padding:22px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px;margin-bottom:18px}
+  .card h2{font-size:15px;margin-bottom:12px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:7px 9px;border-bottom:1px solid var(--line);text-align:right}
+  th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase}
+  td:first-child,th:first-child{text-align:left}
+  input[type=number]{width:78px;padding:5px;border:1px solid var(--line);border-radius:6px;font-size:12px}
+  input[type=range]{width:100%}
+  button{background:var(--brand);color:#fff;border:0;border-radius:8px;padding:10px 18px;font-weight:600;cursor:pointer;font-size:13px;margin-top:12px}
+  button:hover{background:var(--brand2)}
+  .result{margin-top:18px;border:1px dashed var(--brand);border-radius:10px;padding:16px;background:#f0f9ff;display:none}
+  .result .cost{font-size:30px;font-weight:700;color:var(--brand)}
+  .bar{height:22px;background:#e2e8f0;border-radius:6px;overflow:hidden;margin:3px 0;position:relative}
+  .bar span{position:absolute;left:8px;top:2px;font-size:11px;color:#fff;font-weight:600}
+  .bar i{display:block;height:100%;border-radius:6px}
+  .targets{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:10px}
+  .t label{font-size:11px;color:var(--muted);display:flex;flex-direction:column;gap:4px}
+  .note{font-size:12px;color:var(--muted);margin-top:10px}
+  .band{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px 14px;font-size:13px;color:#92400e;margin-top:14px}
+  @media(max-width:760px){.grid{grid-template-columns:1fr}}
+  .colors{display:flex;gap:14px;margin-top:8px;font-size:12px}
+  .colors b{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:4px;vertical-align:-1px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Clinker-to-Cement Mix Proportioning Optimizer</h1>
+  <p>Lowest-cost blend of clinker, gypsum and additions that still meets target composition</p>
+</header>
+<div class="wrap">
+  <div class="grid">
+    <div class="card">
+      <h2>Ingredients</h2>
+      <table>
+        <thead><tr><th>Ingredient</th><th>Cost (USD/t)</th><th>C3S %</th><th>C3A %</th><th>SO3 %</th><th>LOI %</th><th>Max % in</th></tr></thead>
+        <tbody id="ing"></tbody>
+      </table>
+      <button onclick="optimise()">Optimise blend</button>
+    </div>
+    <div class="card">
+      <h2>Quality targets</h2>
+      <div class="targets">
+        <div class="t"><label>Min C3S (%)<input type="number" id="t_c3s" value="55" step="0.1" min="0"></label></div>
+        <div class="t"><label>Max C3A (%)<input type="number" id="t_c3a" value="9" step="0.1" min="0"></label></div>
+        <div class="t"><label>SO3 low (%)<input type="number" id="t_so3l" value="2.0" step="0.1"></label></div>
+        <div class="t"><label>SO3 high (%)<input type="number" id="t_so3h" value="3.5" step="0.1"></label></div>
+        <div class="t"><label>Max LOI (%)<input type="number" id="t_loi" value="5" step="0.1"></label></div>
+      </div>
+
+      <div class="result" id="result"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Optimal blend composition</h2>
+    <div id="bars"></div>
+    <div class="colors">
+      <div><b style="background:#c2712c"></b>Clinker</div>
+      <div><b style="background:#475569"></b>Gypsum</div>
+      <div><b style="background:#d6d3d1"></b>Limestone</div>
+      <div><b style="background:#92400e"></b>Fly ash</div>
+      <div><b style="background:#57534e"></b>Slag</div>
+    </div>
+    <div class="note">Clinker phases are derived from oxide chemistry; the optimizer substitutes
+      low-cost additions up to their caps while keeping C3S, C3A, SO₃ and LOI inside the targets above.</div>
+    <div class="band">Typical rule of thumb — each 1% of clinker replaced by a cheap addition saves roughly
+      the cost difference per tonne, but must not force SO₃ over the setting-control window or pull fineness
+      too low. This tool makes that trade-off explicit.</div>
+  </div>
+</div>
+<script>
+const $=s=>document.getElementById(s);
+const PAL={Clinker:'#c2712c',Gypsum:'#475569',Limestone:'#d6d3d1','Fly ash':'#92400e',Slag:'#57534e'};
+let ing=[
+  {k:'Clinker',  cost:60,C3S:62,C3A:8.0,SO3:0.8,LOI:0.5,cap:100},
+  {k:'Gypsum',   cost:28,C3S:0, C3A:0.0,SO3:46, LOI:18, cap:6},
+  {k:'Limestone',cost:12,C3S:0, C3A:0.0,SO3:0.0,LOI:43, cap:5},
+  {k:'Fly ash',  cost:18,C3S:0, C3A:0.0,SO3:1.0,LOI:4,  cap:25},
+  {k:'Slag',     cost:22,C3S:0, C3A:0.0,SO3:1.8,LOI:1.0,cap:30},
+];
+
+function renderIng(){
+  $('ing').innerHTML=ing.map((r,i)=>`
+    <tr>
+      <td>${r.k}</td>
+      <td><input type="number" value="${r.cost}" step="1" onchange="ing[${i}].cost=+this.value"></td>
+      <td><input type="number" value="${r.C3S}" step="0.1" onchange="ing[${i}].C3S=+this.value"></td>
+      <td><input type="number" value="${r.C3A}" step="0.1" onchange="ing[${i}].C3A=+this.value"></td>
+      <td><input type="number" value="${r.SO3}" step="0.1" onchange="ing[${i}].SO3=+this.value"></td>
+      <td><input type="number" value="${r.LOI}" step="0.1" onchange="ing[${i}].LOI=+this.value"></td>
+      <td><input type="number" value="${r.cap}" step="1" onchange="ing[${i}].cap=+this.value"></td>
+    </tr>`).join('');
+}
+function targets(){
+  return {c3s:Math.max(0,+$('t_c3s').value),c3a:Math.max(0,+$('t_c3a').value),
+          so3l:+$('t_so3l').value,so3h:+$('t_so3h').value,loi:Math.max(0,+$('t_loi').value)};
+}
+function quality(frac){
+  let C3S=0,C3A=0,SO3=0,LOI=0,cost=0;
+  ing.forEach(r=>{const f=frac[r.k]||0;C3S+=r.C3S*f;C3A+=r.C3A*f;SO3+=r.SO3*f;LOI+=r.LOI*f;cost+=r.cost*f;});
+  return {C3S,C3A,SO3,LOI,cost};
+}
+function feasible(frac,t){
+  if(Math.abs(Object.values(frac).reduce((a,b)=>a+b,0)-1)>1e-6)return false;
+  for(const r of ing){const f=frac[r.k]||0;if(f<0||f>r.cap/100+1e-9)return false;}
+  const q=quality(frac);
+  return q.C3S>=t.c3s && q.C3A<=t.c3a && q.SO3>=t.so3l && q.SO3<=t.so3h && q.LOI<=t.loi;
+}
+function optimise(){
+  const t=targets();
+  const keys=ing.filter(r=>r.k!=='Clinker').map(r=>r.k);
+  let best=null;
+  const seeds=[{Clinker:1},{Clinker:.9,Gypsum:.05,Limestone:.05},{Clinker:.8,Gypsum:.05,'Fly ash':.15},{Clinker:.78,Gypsum:.05,Slag:.17}];
+  for(const s of seeds){best=localSearch(s,t,best);}
+  if(!best){$('result').style.display='block';$('result').innerHTML='<div class="note">No feasible blend within these caps and targets. Loosen a cap or target.</div>';return;}
+  const [cost,cfrac]=best;
+  const q=quality(cfrac);
+  $('result').style.display='block';
+  $('result').innerHTML=`
+    <div class="note">Optimal blend</div>
+    <div class="cost">USD ${cost.toFixed(2)} / t</div>
+    <div class="note">vs ${seeds[0].clinker!==undefined?60:60} USD/t for 100% clinker</div>
+    <div class="note" style="margin-top:8px">C3S ${q.C3S.toFixed(1)}% • C3A ${q.C3A.toFixed(2)}% • SO₃ ${q.SO3.toFixed(2)}% • LOI ${q.LOI.toFixed(2)}%</div>`;
+  renderBars(cfrac);
+  return cfrac;
+}
+function localSearch(seed,t,best=null){
+  const keys=ing.filter(r=>r.k!=='Clinker').map(r=>r.k);
+  let cur=Object.assign({},seed);
+  let improved=true,steps=0;
+  while(improved&&steps<4000){
+    improved=false;steps++;
+    for(const k of keys){
+      for(const delta of [0.005,-0.005]){
+        const nxt=Object.assign({},cur);
+        nxt[k]=(cur[k]||0)+delta;
+        if(nxt[k]<0||nxt[k]>((ing.find(r=>r.k===k)||{}).cap||0)/100+1e-9)continue;
+        const clinker=1-Object.entries(nxt).filter(([kk])=>kk!=='Clinker').reduce((a,[,v])=>a+v,0);
+        if(clinker<-1e-9)continue;
+        nxt['Clinker']=clinker;
+        if(!feasible(nxt,t))continue;
+        if(quality(nxt).cost<quality(cur).cost-1e-9){cur=nxt;improved=true;break;}
+      }
+    }
+  }
+  if(feasible(cur,t)){const c=quality(cur).cost;if(!best||c<best[0])return [c,cur];}
+  return best;
+}
+function renderBars(frac){
+  const maxVal=Math.max(...ing.map(r=>frac[r.k]||0));
+  const sorted=ing.slice().sort((a,b)=>(frac[b.k]||0)-(frac[a.k]||0));
+  $('bars').innerHTML=sorted.map(r=>{
+    const f=frac[r.k]||0;
+    return `<div class="bar"><i style="width:${(f/maxVal*100).toFixed(1)}%;background:${PAL[r.k]}"></i><span>${r.k}: ${(f*100).toFixed(1)}%</span></div>`;
+  }).join('');
+}
+renderIng();
+optimise();
+</script>
+</body>
+</html>
